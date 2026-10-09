@@ -3,203 +3,222 @@
 
 > **Monitor smarter. Prevent overflow.**
 
-AquaSentinel is a three-node embedded system designed to monitor a water tank remotely and automate pump control using ultrasonic distance measurements and long-range LoRa communication. The project is being developed with an emphasis on clear documentation, modular firmware, practical enclosure design, and safe testing before deployment.
+AquaSentinel is a three-node embedded system designed to monitor a water tank and automate pump control using ultrasonic measurements and LoRa communication. The project is being developed around three cooperating nodes—Sensor, Relay, and Master—with a focus on clear documentation, protective 3D-printed enclosures, modular firmware, and safety-first testing.
 
 **Repository:** [bishwajit5788/AquaSentinel](https://github.com/bishwajit5788/AquaSentinel)
 
 ---
 
-## Project at a glance
+## Project status
+
+**Current stage: planning and design.** The system architecture and intended behavior are described here. Final CAD models, verified wiring diagrams, node firmware, and hardware test results will be added after design review and testing. Planned behavior must not be mistaken for already implemented or verified behavior.
+
+## At a glance
 
 | Feature | Planned implementation |
 |---|---|
-| Water-level sensing | SR04M-2 waterproof ultrasonic sensor |
-| Sensor controller | ESP32 DevKit WROOM-32 |
-| Wireless communication | REYAX RYLR998 LoRa modules |
-| Distributed architecture | Sensor, Relay, and Master nodes |
-| Pump switching | ESP8266 relay node and appropriately rated switching hardware |
-| User interface | ESP8266 Master with one 0.96-inch SSD1306 OLED, toggle switch, and buzzer |
-| Sensor-node power | Solar panel, rechargeable 18650 pack, compatible charger, protection, and regulators |
-| Firmware | Separate firmware for each node; no Blynk dependency in the planned design |
-| Enclosures | 3D-printed protective enclosures planned for all three nodes |
+| Water-level sensor | SR04M-2 waterproof ultrasonic sensor |
+| Sensor controller | ESP32 DevKit WROOM-32 (38-pin) |
+| Relay and Master controllers | Two NodeMCU ESP8266 boards |
+| Wireless network | Three REYAX RYLR998 LoRa modules |
+| User interface | One 0.96-inch SSD1306 I²C OLED (128×64), toggle switch, and buzzer |
+| Pump interface | Relay node with correctly rated external switching hardware as required |
+| Sensor-node power | Solar panel and two 18650 cells; charging topology requires final verification |
+| Enclosures | Custom 3D-printed protective enclosures planned for all three nodes |
+| App dependency | No Blynk dependency in the planned firmware |
 
-> **Development status: Planning and design.** Final enclosure CAD, verified connection diagrams, node firmware, and hardware test results have not yet been published. The architecture below describes the current plan, not a claim that the complete system is tested.
+## Three-node LoRa communication
 
-## System architecture
-
-AquaSentinel separates sensing, forwarding/actuation, and user interaction into three nodes. This modular design is intended to make each node easier to build and test independently.
+The three LoRa radios form a **cooperating, bidirectional application-level communication system**. They do not automatically become a mesh network just because three radios are present: the firmware must define addressing, forwarding, commands, message validation, acknowledgements, retries, and timeouts.
 
 ~~~text
-┌────────────────────────────┐
-│ SENSOR NODE                │
-│ ESP32 + SR04M-2             │
-│ Measures tank distance     │
-│ Sends level telemetry      │
-└──────────────┬─────────────┘
-               │ LoRa
-               ▼
-┌────────────────────────────┐
-│ RELAY NODE                 │
-│ ESP8266 + relay interface  │
-│ Forwards telemetry         │
-│ Receives pump commands     │
-└──────────────┬─────────────┘
-               │ LoRa
-               ▼
-┌────────────────────────────┐
-│ MASTER NODE                │
-│ ESP8266 + OLED + switch    │
-│ Displays level and status  │
-│ Applies pump-control rules │
-│ Buzzer for alerts          │
-└────────────────────────────┘
+             SENSOR NODE
+       ESP32 + SR04M-2 + LoRa
+       Measures tank water level
+                  |
+                  | 1. TELEMETRY
+                  v
+              RELAY NODE
+        ESP8266 + LoRa + relay
+       Forwards data; controls pump
+                  |
+                  | 2. FORWARDED TELEMETRY
+                  v
+              MASTER NODE
+       ESP8266 + LoRa + OLED
+       Decides desired pump state
+                  |
+                  | 3. PUMP COMMAND
+                  v
+              RELAY NODE
+       Validates command and changes
+       pump-control output if safe
+                  |
+                  | status/acknowledgement,
+                  | when implemented
+                  v
+              MASTER NODE
 ~~~
 
-The exact command flow, acknowledgements, timeout behavior, and fail-safe rules will be documented and tested before the firmware is treated as deployment-ready.
+The Master can send a command to the Relay Node using LoRa; the Relay Node is the actuator node. Sensor measurements travel through the Relay Node to the Master. Acknowledgements and status messages should be implemented and tested so that the interface can distinguish a requested pump state from a confirmed relay state.
 
-## The three nodes
+### Intended automation sequence
 
-### 1. Sensor Node — measurement
+1. The Sensor Node measures the water-surface distance and checks whether the reading is plausible.
+2. It sends a telemetry packet to the Relay Node.
+3. The Relay Node validates the packet and forwards the latest valid measurement to the Master Node.
+4. The Master Node evaluates the water level, sensor freshness, fault status, and user switch setting against the control policy.
+5. The Master Node sends a pump ON/OFF command to the Relay Node.
+6. The Relay Node validates the command and applies it only if local safety conditions allow it.
+7. The system reports command/relay status where acknowledgements are implemented. Missing or stale communications must trigger a defined safe behavior.
 
-**Planned hardware**
+This describes the planned flow. End-to-end behavior is not yet claimed as tested.
+
+## Node responsibilities
+
+### 1. Sensor Node — measure and transmit
+
+**Hardware**
 - ESP32 DevKit WROOM-32 (38-pin)
 - SR04M-2 waterproof ultrasonic sensor
 - REYAX RYLR998 LoRa module
-- Solar panel, rechargeable battery pack, charging/protection hardware, and regulated power rails
+- 6 V solar panel, two 18650 cells, compatible charger/protection, and regulated supplies
 
-**Planned responsibilities**
-- Measure the distance from the sensor to the water surface.
-- Convert distance to an estimated level percentage using calibrated empty/full reference points.
-- Transmit readings and sensor status to the Relay Node.
-- Operate efficiently on solar power, with low-power behavior considered during implementation.
+**Responsibilities**
+- Measure distance to the water surface.
+- Convert distance into an estimated level percentage using verified tank calibration.
+- Transmit measurements and sensor status to the Relay Node.
+- Use power-efficient operation where practical.
 
-Initial calibration values under consideration are **22 cm = 100%** and **51 cm = 0%**. These values must be checked against the actual tank geometry and sensor mounting before use.
+Initial calibration values under consideration: **22 cm = 100%** and **51 cm = 0%**. Verify these against the tank, sensor dead zone, and mounting position before use.
 
-### 2. Relay Node — forwarding and pump interface
+### 2. Relay Node — forward data and control the pump interface
 
-**Planned hardware**
+**Hardware**
 - NodeMCU ESP8266
 - REYAX RYLR998 LoRa module
 - 5 V relay module or suitable driver interface
 
-**Planned responsibilities**
+**Responsibilities**
 - Receive and validate Sensor Node telemetry.
-- Forward valid readings to the Master Node.
-- Receive pump-state commands from the Master Node.
-- Control the low-voltage relay interface and report status where supported.
+- Forward valid telemetry to the Master Node.
+- Receive and validate pump commands from the Master Node.
+- Control the low-voltage relay/driver interface.
+- Provide command acknowledgement or output status when implemented.
 
-The relay node is not a substitute for independent electrical protection. A real pump may require a correctly rated contactor, overload protection, a suitable enclosure, and installation by a qualified person.
+The relay module is not automatically suitable for switching a real pump. Depending on pump voltage, current, inrush, and installation, a correctly rated contactor, overload protection, enclosure, and qualified electrical installation may be required.
 
-### 3. Master Node — display and control
+### 3. Master Node — display, decisions, and alerts
 
-**Planned hardware**
+**Hardware**
 - NodeMCU ESP8266
 - REYAX RYLR998 LoRa module
-- One 0.96-inch SSD1306 I²C OLED (128 × 64)
+- One 0.96-inch SSD1306 I²C OLED (128×64)
 - SPST maintained toggle switch
 - Buzzer
 
-**Planned responsibilities**
-- Display water level and communication/system status.
-- Apply configured automatic pump-control rules.
-- Accept physical user input through the toggle switch.
-- Signal defined alerts through the buzzer.
+**Responsibilities**
+- Display water level, pump state, and communication/system status.
+- Decide the desired pump state using defined automation rules.
+- Accept user input from the physical toggle switch.
+- Signal defined faults and alerts with the buzzer.
 
-Manual input must **never bypass the tank-full cutoff, stale-data timeout, or sensor-fault safety behavior**. Exact control thresholds and alert patterns will be documented before implementation is considered complete.
+**The switch must never override a full-tank cutoff, stale-telemetry cutoff, sensor-fault handling, or independent hardware protection.** Manual control is an input to the control policy, not permission to bypass safety rules.
 
-## Planned hardware and communication reference
+## Planned pin and radio reference
 
-| Item | Current design reference |
+These are the current design references, **not a verified connection diagram**. The dedicated wiring documents will be published after checking the exact board variants and module datasheets.
+
+| Connection | Proposed assignment |
 |---|---|
 | Sensor MCU | ESP32 DevKit WROOM-32, 38-pin |
+| Sensor TRIG / ECHO | GPIO32 / GPIO33 |
+| Sensor LoRa UART | ESP32 GPIO16 (RX), GPIO17 (TX) |
 | Relay MCU | NodeMCU ESP8266 |
+| Relay output signal | D6, subject to relay-module polarity and boot testing |
+| Relay LoRa UART | D1 (RX), D2 (TX), using a suitable software-UART arrangement |
 | Master MCU | NodeMCU ESP8266 |
-| Radio | REYAX RYLR998 on all nodes |
+| Master OLED I²C | SDA D4, SCL D3; verify boot-strap compatibility |
+| Master toggle switch | D5 with INPUT_PULLUP, subject to wiring validation |
 | Logical radio addresses | Sensor 187, Relay 100, Master 200 |
-| UART assumption | 9600 baud; confirm against module configuration |
-| Sensor interface | TRIG GPIO32, ECHO GPIO33 on ESP32 |
-| Sensor radio UART | ESP32 GPIO16 (RX), GPIO17 (TX) |
-| Relay control signal | ESP8266 D6, subject to relay-module polarity and boot validation |
-| Relay radio UART | ESP8266 D1 (RX), D2 (TX), using a suitable software UART arrangement |
-| Master OLED | I²C SDA D4, SCL D3 — verify ESP8266 boot behavior with the chosen display |
-| Master toggle switch | D5 with INPUT_PULLUP, subject to final wiring validation |
+| UART baud assumption | 9600; confirm/configure consistently on all radios |
 
-**These are proposed reference assignments, not a verified wiring diagram.** Check each board's pin labels and electrical limits before connecting hardware. The RYLR998 supply is 3.3 V; do not power its supply pin from 5 V. Confirm the radio variant, legal operating band, antenna, and matching radio parameters on all nodes. Never transmit without the required antenna connected.
+Connect UART TX to the receiving device's RX and RX to TX. Verify logic levels and common reference ground for non-isolated signals. ESP32/ESP8266 GPIOs are not 5 V tolerant. The RYLR998 requires a regulated 3.3 V supply; do not feed its power pin 5 V. Confirm that all modules use compatible radio bands, antennas, network IDs, and RF parameters. Never transmit without the required antenna attached.
+
+## Automation and overflow prevention
+
+The control logic will be designed around safety states rather than relying only on a percentage displayed on the OLED.
+
+- **Level thresholds:** define and document when filling should start and stop, including hysteresis to prevent rapid relay cycling.
+- **Full-tank cutoff:** prohibit a pump-ON command at the high-water limit.
+- **Stale data:** if a valid measurement is not received within the configured timeout, enter a defined safe state.
+- **Sensor faults:** reject implausible, missing, or invalid readings; never treat a sensor fault as an empty tank.
+- **Radio failure:** handle missing, malformed, duplicate, or out-of-order packets; implement acknowledgements/retries and sequence/session handling.
+- **Safe boot and restart:** avoid unintended pump activation while either controller restarts.
+- **Independent overflow protection:** use an independent, appropriately rated high-level float switch or equivalent hardware cutoff in the pump-control circuit. Firmware and LoRa communication alone cannot guarantee overflow prevention.
+- **Fail-safe output:** choose and test the relay's safe default state for the real pump installation.
+
+These are engineering requirements for implementation and testing—not claims that every protection is already implemented.
 
 ## Solar and battery safety
 
-The Sensor Node is planned to use a **6 V solar panel and two 18650 cells intended to be connected in series (2S)**.
+The current plan is a **6 V solar panel with two 18650 cells in series (2S)**.
 
-- A 2S lithium-ion pack is typically 7.4 V nominal and 8.4 V fully charged when using standard 4.2 V-per-cell cells.
-- **The CN3065 is a single-cell charger and must not be used to charge a 2S pack.**
-- A generic boost converter is not a battery charger.
-- Use a solar charging solution explicitly compatible with the panel's operating range and a 2S lithium-ion pack, plus suitable 2S cell protection and balancing.
-- Confirm the exact cell specifications, permitted charge current, panel power, and charger design before assembling or charging the pack.
-- Use regulated supplies appropriate for the ESP32, ESP8266, sensor, and radio. Verify all signal voltages; ESP GPIOs are not 5 V tolerant.
+- A standard 2S lithium-ion pack is typically 7.4 V nominal and 8.4 V fully charged.
+- **The CN3065 is a single-cell charger and must not charge a 2S pack.**
+- A generic boost converter does not replace a lithium battery charger.
+- Use a solar charging controller explicitly compatible with the panel's real input range and a 2S lithium-ion pack, plus suitable 2S cell protection and balancing.
+- Confirm cell type, cell datasheets, permitted charge current, panel wattage/current, charger input range, and BMS wiring before assembling or charging the pack.
+- Use suitable regulated rails for the ESP32, sensor, and 3.3 V LoRa module.
 
-Charging topology and parts selection remain **unfinalized**. Do not use the planned battery arrangement until the charger, protection circuit, and wiring have been verified.
+The final charging circuit and exact parts are still to be selected and verified. Do not charge the planned 2S pack through the CN3065.
 
-## Safety-first control principles
+## Protective 3D-printed enclosures
 
-The implementation and testing plan will cover the following:
+Custom enclosures are planned for the Sensor, Relay, and Master nodes. Each model will account for:
+- Exact board dimensions, mounting points, connector access, and serviceability.
+- Cable routing, strain relief, and appropriate cable glands.
+- Sensor aperture and mounting geometry.
+- Heat dissipation, condensation, water ingress, and UV exposure.
+- Lid fastening and sealing features appropriate to the intended environment.
 
-1. **High-water cutoff:** stop pump filling at the configured full level.
-2. **Stale telemetry:** transition to a defined safe state if valid sensor updates stop.
-3. **Sensor fault handling:** reject invalid readings rather than treating them as trustworthy level data.
-4. **Radio loss and malformed messages:** validate packets and define timeout/recovery behavior.
-5. **Safe startup:** avoid unintended pump activation while controllers boot or restart.
-6. **Independent overflow protection:** use a suitably rated, independent high-level float switch or equivalent hardware cutoff in the pump-control circuit. Firmware alone is not independent overflow protection.
-7. **Electrical isolation and ratings:** size switching components for the actual pump and supply; keep hazardous mains wiring out of hobby-level prototype wiring.
+A printed enclosure is not automatically waterproof. The finished print, seams, glands, material, and mounting orientation must be evaluated before outdoor use.
 
-These are design requirements, not a statement that all protections are already implemented or tested.
+## Development roadmap
 
-## Enclosures and environmental protection
+Only the introductory README and MIT license are currently published. The following artifacts will be added after planning and validation:
 
-Protective 3D-printed enclosures are planned for the Sensor, Relay, and Master nodes. Each enclosure design will need to account for:
-
-- Board dimensions, connector access, cable routing, and strain relief.
-- Sensor opening and mounting geometry.
-- Ventilation or thermal considerations where needed.
-- Water ingress, condensation, UV exposure, and the limits of the chosen print material.
-- Serviceability: lids, fasteners, and access for debugging or replacing parts.
-
-A 3D-printed enclosure should not be assumed waterproof merely because it is closed. Environmental sealing and outdoor suitability must be evaluated for the final print, seams, cable glands, and mounting orientation.
-
-## Repository roadmap
-
-Only this introductory README is being published at the current planning stage. Additional files will be added after the design has been reviewed.
-
-- [ ] Final bill of materials with exact module variants and ratings
-- [ ] Verified system block diagram and separate connection diagram for each node
-- [ ] Solar charging and battery-protection design review
-- [ ] 3D enclosure models for Sensor, Relay, and Master nodes
-- [ ] Sensor Node firmware and isolated sensor test
-- [ ] Relay Node firmware and relay-interface test
+- [ ] Final bill of materials with exact part numbers and electrical ratings
+- [ ] Complete three-node communication and control-flow diagram
+- [ ] Separate, verified wiring diagram for Sensor, Relay, and Master nodes
+- [ ] Final solar charger, 2S battery protection, and power-converter design
+- [ ] 3D enclosure models for all three nodes
+- [ ] Sensor Node firmware and standalone sensor test
+- [ ] Relay Node firmware and safe relay-interface test
 - [ ] Master Node firmware, OLED, switch, and buzzer test
-- [ ] LoRa integration, packet validation, timeout, and recovery tests
-- [ ] End-to-end pump-control tests, including fault injection
-- [ ] Build instructions, test evidence, and known limitations
+- [ ] LoRa addressing, message validation, acknowledgements, retries, and timeout tests
+- [ ] Integrated automation tests for normal filling, full tank, stale data, sensor fault, and radio loss
+- [ ] Test evidence, build instructions, known limitations, and release notes
 
-## Testing philosophy
+## Testing approach
 
-Each node will be tested independently before the complete system is integrated:
+1. Verify power rails and current draw before connecting the radios or sensor.
+2. Test each peripheral independently.
+3. Test each LoRa link with harmless test messages before enabling pump control.
+4. Test malformed data, sensor disconnection, radio loss, duplicate packets, and controller restarts.
+5. Test automation with an indicator or dummy load—not a live pump initially.
+6. Verify full-tank cutoff and independent hardware overflow protection.
+7. Perform supervised end-to-end testing before real installation.
 
-1. Verify power rails and current draw.
-2. Test peripherals locally without activating a real pump.
-3. Verify radio communication with test messages.
-4. Test invalid readings, disconnected sensors, radio loss, and controller restarts.
-5. Verify full-tank cutoff and independent overflow protection.
-6. Run supervised end-to-end tests before any real installation.
+Until test evidence is published, treat AquaSentinel as a work in progress. Do not rely on it as the only safeguard against flooding, dry running, electrical faults, or pump damage.
 
-Until test evidence is published, treat this project as a work in progress and do not rely on it as the only protection against flooding or pump damage.
+## Contributing
 
-## Contributing and feedback
-
-Suggestions, issue reports, and design reviews are welcome. Please include the relevant board/module variant, wiring details, logs, and reproducible steps when reporting a problem. Safety-related issues should clearly state whether the behavior was observed on hardware or identified during design review.
+Design reviews and issue reports are welcome. Include board/module variants, wiring details, logs, and reproducible steps. Distinguish hardware-observed results from issues found by inspection or simulation.
 
 ## License
 
-No license has been selected yet. Until a license is added, all rights remain with the copyright holder; do not assume the repository is licensed for reuse, modification, or redistribution.
+AquaSentinel is released under the [MIT License](LICENSE). See the license file for the full terms.
 
 ---
 
